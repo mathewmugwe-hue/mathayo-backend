@@ -214,7 +214,16 @@ def predict(
         o["edge_pct"] = round((o["model_prob"] - o["market_prob"]) * 100, 2)
         o["kelly_stake_pct"] = kelly_fraction(o["model_prob"], o["odds"])
 
-    outcomes.sort(key=lambda x: x["edge_pct"], reverse=True)
+    # IMPORTANT: only sort by edge when we have independent signal. With
+    # market-only input, edge_pct is a artifact of the Dixon-Coles rho
+    # adjustment interacting with market-derived xG, not real value -
+    # it was found to spuriously favor Draw in backtesting. Without
+    # independent data, fall back to highest raw probability (i.e. mirror
+    # the market's own favorite) so the pick is never a phantom edge.
+    if has_independent_signal:
+        outcomes.sort(key=lambda x: x["edge_pct"], reverse=True)
+    else:
+        outcomes.sort(key=lambda x: x["model_prob"], reverse=True)
     best = outcomes[0]
 
     if not has_independent_signal:
@@ -224,13 +233,34 @@ def predict(
     else:
         verdict = "NO PLAY — insufficient edge vs market price"
 
+    # Grade reflects genuine edge, not raw favorite-ness. No independent
+    # signal => always capped at C, since there's nothing to grade.
+    prob_pct = best["model_prob"] * 100
+    if not has_independent_signal:
+        grade = "C (No independent data — model = market, do not bet)"
+    elif best["edge_pct"] >= 6:
+        grade = "A+ (Elite Value)"
+    elif best["edge_pct"] >= 4:
+        grade = "A (Strong Edge)"
+    elif best["edge_pct"] >= min_edge_pct:
+        grade = "B (Moderate Edge)"
+    else:
+        grade = "C (No qualifying edge)"
+
     return {
+        # --- legacy fields (kept so existing frontends don't break) ---
         "match": f"{home_team} vs {away_team}",
+        "recommended_pick": best["market"],
+        "win_probability": f"{prob_pct:.1f}%",
+        "safety_grade": grade,
+        "raw_margin": f"{margin_pct:.2f}%",
+        "calculated_xG": f"Home: {h_xg:.2f} | Away: {a_xg:.2f}",
+        # --- new fields (use these going forward) ---
         "verdict": verdict,
         "has_independent_signal": has_independent_signal,
         "market_margin_pct": round(margin_pct, 2),
         "shin_insider_proportion_z": round(shin_z, 4),
-        "calculated_xG": {"home": round(h_xg, 2), "away": round(a_xg, 2)},
+        "calculated_xG_detail": {"home": round(h_xg, 2), "away": round(a_xg, 2)},
         "outcomes": [
             {
                 "market": o["market"],
