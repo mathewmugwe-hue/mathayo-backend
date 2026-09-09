@@ -1,4 +1,7 @@
 fastapi
 uvicorn
-requests
-beautifulsoup4
+pandas
+numpy
+scikit-learn
+understat
+aiohttp
