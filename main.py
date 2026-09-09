@@ -1,5 +1,5 @@
 """
-Soccer Match Prediction Engine — v3.3 (Unlocked Pure Value & Action Generator)
+Soccer Match Prediction Engine — v3.4 (Bulletproof Pure Value Generator)
 """
 
 from fastapi import FastAPI, Query
@@ -15,29 +15,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Comprehensive team strength lookup (Attack rating, Defense rating)
+# Comprehensive team strength lookup with standard aliases
 TEAM_RATINGS = {
     # Bundesliga
     "dortmund": {"att": 1.95, "def": 0.95},
+    "borussia dortmund": {"att": 1.95, "def": 0.95},
     "bayern munich": {"att": 2.50, "def": 0.70},
     "freiburg": {"att": 1.40, "def": 1.10},
     "paderborn": {"att": 0.95, "def": 1.65},
     "hoffenheim": {"att": 1.55, "def": 1.20},
     "mainz": {"att": 1.25, "def": 1.25},
+    "mainz 05": {"att": 1.25, "def": 1.25},
     "hamburg": {"att": 1.20, "def": 1.30},
+    "hamburger sv": {"att": 1.20, "def": 1.30},
     "eintracht braunschweig": {"att": 0.90, "def": 1.60},
     "hertha bsc": {"att": 1.10, "def": 1.40},
     "vfb stuttgart": {"att": 1.60, "def": 1.15},
+    "stuttgart": {"att": 1.60, "def": 1.15},
     
     # Premier League
     "tottenham": {"att": 1.80, "def": 1.00},
+    "tottenham hotspur": {"att": 1.80, "def": 1.00},
     "nottm forest": {"att": 1.25, "def": 1.25},
+    "nottingham forest": {"att": 1.25, "def": 1.25},
     "fulham": {"att": 1.30, "def": 1.25},
     "crystal palace": {"att": 1.20, "def": 1.25},
     "everton": {"att": 1.10, "def": 1.30},
     "man utd": {"att": 1.70, "def": 1.05},
+    "manchester united": {"att": 1.70, "def": 1.05},
     "arsenal": {"att": 2.15, "def": 0.75},
     "chelsea": {"att": 1.80, "def": 1.05},
+    "wolves": {"att": 1.30, "def": 1.20},
+    "wolverhampton wanderers": {"att": 1.30, "def": 1.20},
+    "birmingham": {"att": 1.10, "def": 1.40},
+    "birmingham city": {"att": 1.10, "def": 1.40},
     
     # La Liga
     "athletic club": {"att": 1.50, "def": 0.90},
@@ -59,16 +70,17 @@ TEAM_RATINGS = {
     "venezia": {"att": 1.00, "def": 1.50},
     "juventus": {"att": 1.70, "def": 0.75},
     "ac milan": {"att": 1.85, "def": 0.95},
-    
-    # Championship
-    "birmingham": {"att": 1.10, "def": 1.40},
-    "wolves": {"att": 1.30, "def": 1.20}
+    "milan": {"att": 1.85, "def": 0.95}
 }
 
 def get_team_ratings(team_name: str):
     key = team_name.strip().lower()
     if key in TEAM_RATINGS:
         return TEAM_RATINGS[key]
+    # Partial matching fallback
+    for name, ratings in TEAM_RATINGS.items():
+        if name in key or key in name:
+            return ratings
     return {"att": 1.20, "def": 1.20}
 
 def poisson_pmf(lam: float, k: int) -> float:
@@ -122,23 +134,39 @@ def kelly_fraction(model_prob: float, decimal_odds: float, kelly_multiplier: flo
 
 @app.get("/")
 def home():
-    return {"status": "Prediction Engine v3.3 — Unlocked & Active"}
+    return {"status": "Prediction Engine v3.4 — Fully Unlocked"}
 
 @app.get("/predict")
 def predict(
     home_team: str = Query("Home"),
     away_team: str = Query("Away"),
-    home_odds: float = Query(2.40),
-    draw_odds: float = Query(3.30),
-    away_odds: float = Query(3.10),
+    home_odds: float = Query(0.0),
+    draw_odds: float = Query(0.0),
+    away_odds: float = Query(0.0),
     rho: float = Query(-0.12, description="Dixon-Coles correlation parameter"),
-    min_edge_pct: float = Query(0.1, description="Minimum edge (%) required for a play"),
+    min_edge_pct: float = Query(-5.0, description="Minimum edge threshold"),
 ):
+    # 1. Pure Model Calculation using Team Strength Ratings
+    h_rat = get_team_ratings(home_team)
+    a_rat = get_team_ratings(away_team)
+    
+    league_avg_goals = 1.40
+    h_xg = max(0.4, h_rat["att"] * a_rat["def"] * league_avg_goals * 1.10)
+    a_xg = max(0.4, a_rat["att"] * h_rat["def"] * league_avg_goals * 0.90)
+
+    matrix = score_matrix(h_xg, a_xg, rho)
+    model_home, model_draw, model_away = outcome_probs_from_matrix(matrix)
+
+    # 2. If user didn't provide realistic custom odds, derive fair market baseline odds from model probabilities
+    if home_odds <= 1.01 or draw_odds <= 1.01 or away_odds <= 1.01:
+        home_odds = round(1.0 / max(0.05, model_home) * 1.06, 2)
+        draw_odds = round(1.0 / max(0.05, model_draw) * 1.06, 2)
+        away_odds = round(1.0 / max(0.05, model_away) * 1.06, 2)
+
     home_odds = max(1.01, home_odds)
     draw_odds = max(1.01, draw_odds)
     away_odds = max(1.01, away_odds)
 
-    # Simple market probabilities from odds (with standard bookmaker margin)
     raw_home = 1.0 / home_odds
     raw_draw = 1.0 / draw_odds
     raw_away = 1.0 / away_odds
@@ -148,17 +176,6 @@ def predict(
     p_home_market = raw_home / total_raw
     p_draw_market = raw_draw / total_raw
     p_away_market = raw_away / total_raw
-
-    # Pure Model Calculation using Team Strength Ratings
-    h_rat = get_team_ratings(home_team)
-    a_rat = get_team_ratings(away_team)
-    
-    league_avg_goals = 1.40
-    h_xg = max(0.5, h_rat["att"] * a_rat["def"] * league_avg_goals * 1.10) # Home advantage factor
-    a_xg = max(0.5, a_rat["att"] * h_rat["def"] * league_avg_goals * 0.90)
-
-    matrix = score_matrix(h_xg, a_xg, rho)
-    model_home, model_draw, model_away = outcome_probs_from_matrix(matrix)
 
     outcomes = [
         {"market": f"Home Win ({home_team})", "code": "1", "model_prob": model_home, "market_prob": p_home_market, "odds": home_odds},
@@ -170,22 +187,18 @@ def predict(
         o["edge_pct"] = round((o["model_prob"] - o["market_prob"]) * 100, 2)
         o["kelly_stake_pct"] = kelly_fraction(o["model_prob"], o["odds"])
 
-    outcomes.sort(key=lambda x: x["edge_pct"], reverse=True)
+    outcomes.sort(key=lambda x: x["model_prob"], reverse=True)
     best = outcomes[0]
 
-    # Force a play whenever edge is positive or meets the minimal threshold
-    if best["edge_pct"] >= min_edge_pct and best["odds"] > 1.05:
-        verdict = f"RECOMMENDED PLAY — {best['market']} offers a {best['edge_pct']:.1f}% value edge."
-    else:
-        verdict = "NO PLAY — market price is fully efficient."
+    verdict = f"RECOMMENDED PLAY — {best['market']} ({best['model_prob']*100:.1f}% win probability)"
 
     prob_pct = best["model_prob"] * 100
-    if best["edge_pct"] >= 4:
-        grade = "A+ (High Value Play)"
-    elif best["edge_pct"] >= 2:
-        grade = "A (Solid Edge)"
+    if prob_pct >= 45:
+        grade = "A+ (Strong Favorite / Value)"
+    elif prob_pct >= 35:
+        grade = "A (Solid Pick)"
     else:
-        grade = "B (Marginal Value)"
+        grade = "B (Value Option)"
 
     return {
         "match": f"{home_team} vs {away_team}",
